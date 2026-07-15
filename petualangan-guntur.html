@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Petualangan Guntur - Platformer Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .game-container {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            text-align: center;
+        }
+
+        h1 {
+            color: #ffd700;
+            font-size: 2em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+
+        h1 span {
+            color: #00d4ff;
+        }
+
+        canvas {
+            border: 3px solid #ffd700;
+            border-radius: 10px;
+            background: #87CEEB;
+            display: block;
+            margin: 0 auto;
+        }
+
+        .controls {
+            margin-top: 15px;
+            color: #fff;
+            font-size: 14px;
+        }
+
+        .controls kbd {
+            background: #0f3460;
+            padding: 5px 10px;
+            border-radius: 5px;
+            border: 1px solid #ffd700;
+            color: #ffd700;
+            font-weight: bold;
+        }
+
+        .score {
+            color: #fff;
+            font-size: 18px;
+            margin-top: 10px;
+        }
+
+        .score span {
+            color: #ffd700;
+            font-weight: bold;
+        }
+
+        .game-over {
+            display: none;
+            color: #ff4444;
+            font-size: 22px;
+            font-weight: bold;
+            margin-top: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            line-height: 1.6;
+        }
+
+        .game-over.victory {
+            color: #ffd700;
+        }
+
+        .game-over button {
+            background: #ffd700;
+            border: none;
+            padding: 10px 30px;
+            border-radius: 10px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            color: #1a1a2e;
+            margin-top: 10px;
+            transition: transform 0.2s;
+        }
+
+        .game-over button:hover {
+            transform: scale(1.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <h1>⚡ PETUALANGAN <span>GUNTUR</span> ⚡</h1>
+        <canvas id="gameCanvas" width="800" height="500"></canvas>
+        <div class="controls">
+            <kbd>←</kbd> <kbd>→</kbd> Gerak &nbsp;|&nbsp; <kbd>Spasi</kbd> / <kbd>↑</kbd> Lompat
+        </div>
+        <div class="score">
+            Skor: <span id="scoreDisplay">0</span> | Level: <span id="levelDisplay">1</span>/20 | Nyawa: <span id="livesDisplay">❤️❤️❤️❤️❤️</span>
+        </div>
+        <div class="game-over" id="gameOver">
+            ☁️ GAME OVER ☁️<br>
+            <span id="finalScore"></span>
+            <br><button onclick="restartGame()">Main Lagi</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreSpan = document.getElementById('scoreDisplay');
+        const levelSpan = document.getElementById('levelDisplay');
+        const livesSpan = document.getElementById('livesDisplay');
+        const gameOverDiv = document.getElementById('gameOver');
+
+        // ===== VARIABEL GAME =====
+        const MAX_LEVEL = 20;
+        const BOSS_LEVEL = 20;
+        const maxLives = 5;
+
+        let score = 0;
+        let level = 1;
+        let lives = maxLives;
+        let gameRunning = true;
+        let frameCount = 0;
+        let gravity = 0.6;
+        let friction = 0.8;
+
+        // ===== KARAKTER GUNTUR =====
+        const player = {
+            x: 80,
+            y: 350,
+            width: 35,
+            height: 50,
+            vx: 0,
+            vy: 0,
+            speed: 5,
+            jumpPower: -12,
+            grounded: false,
+            facing: 1, // 1 = kanan, -1 = kiri
+            frame: 0,
+            frameTimer: 0,
+            invincible: 0
+        };
+
+        // ===== PLATFORM, MUSUH, KOIN =====
+        let platforms = [];
+        let enemies = [];
+        let coins = [];
+
+        // ===== ITEM DROP (heart) =====
+        let drops = [];
+
+        // ===== BOSS =====
+        let boss = null;
+        let bossProjectiles = [];
+
+        // ===== HELPER: cek tumbukan kotak =====
+        function overlap(ax, ay, aw, ah, bx, by, bw, bh) {
+            return ax + aw > bx && ax < bx + bw && ay + ah > by && ay < by + bh;
+        }
+
+        // ===== LAYOUT LEVEL AWAL (1-3, dibuat tangan) =====
+        const levelLayouts = {
+            1: {
+                platforms: [
+                    {x: 0, y: 450, w: 800, h: 50},
+                    {x: 100, y: 350, w: 120, h: 20},
+                    {x: 300, y: 300, w: 120, h: 20},
+                    {x: 500, y: 350, w: 120, h: 20},
+                    {x: 650, y: 250, w: 120, h: 20},
+                    {x: 200, y: 200, w: 100, h: 20},
+                    {x: 400, y: 180, w: 100, h: 20}
+                ],
+                enemies: [
+                    {x: 350, y: 430, w: 30, h: 30, range: 80, speed: 1.5, dir: 1},
+                    {x: 550, y: 430, w: 30, h: 30, range: 60, speed: 1.2, dir: 1}
+                ],
+                coins: [
+                    {x: 150, y: 320, w: 20, h: 20},
+                    {x: 350, y: 270, w: 20, h: 20},
+                    {x: 550, y: 320, w: 20, h: 20},
+                    {x: 700, y: 220, w: 20, h: 20},
+                    {x: 250, y: 170, w: 20, h: 20},
+                    {x: 450, y: 150, w: 20, h: 20}
+                ]
+            },
+            2: {
+                platforms: [
+                    {x: 0, y: 450, w: 800, h: 50},
+                    {x: 50, y: 350, w: 100, h: 20},
+                    {x: 220, y: 300, w: 100, h: 20},
+                    {x: 400, y: 260, w: 100, h: 20},
+                    {x: 570, y: 300, w: 100, h: 20},
+                    {x: 700, y: 200, w: 100, h: 20},
+                    {x: 150, y: 180, w: 100, h: 20},
+                    {x: 450, y: 140, w: 100, h: 20}
+                ],
+                enemies: [
+                    {x: 250, y: 430, w: 30, h: 30, range: 100, speed: 2, dir: 1},
+                    {x: 450, y: 430, w: 30, h: 30, range: 70, speed: 1.8, dir: -1},
+                    {x: 650, y: 430, w: 30, h: 30, range: 50, speed: 2.5, dir: 1}
+                ],
+                coins: [
+                    {x: 100, y: 320, w: 20, h: 20},
+                    {x: 270, y: 270, w: 20, h: 20},
+                    {x: 450, y: 230, w: 20, h: 20},
+                    {x: 620, y: 270, w: 20, h: 20},
+                    {x: 750, y: 170, w: 20, h: 20},
+                    {x: 200, y: 150, w: 20, h: 20},
+                    {x: 500, y: 110, w: 20, h: 20}
+                ]
+            },
+            3: {
+                platforms: [
+                    {x: 0, y: 450, w: 800, h: 50},
+                    {x: 30, y: 350, w: 90, h: 20},
+                    {x: 180, y: 300, w: 90, h: 20},
+                    {x: 330, y: 250, w: 90, h: 20},
+                    {x: 470, y: 200, w: 90, h: 20},
+                    {x: 600, y: 150, w: 90, h: 20},
+                    {x: 730, y: 100, w: 70, h: 20},
+                    {x: 350, y: 100, w: 100, h: 20},
+                    {x: 100, y: 150, w: 100, h: 20}
+                ],
+                enemies: [
+                    {x: 200, y: 430, w: 35, h: 30, range: 120, speed: 2.5, dir: 1},
+                    {x: 380, y: 430, w: 35, h: 30, range: 100, speed: 3, dir: -1},
+                    {x: 560, y: 430, w: 35, h: 30, range: 80, speed: 3.5, dir: 1},
+                    {x: 400, y: 230, w: 30, h: 30, range: 50, speed: 2, dir: 1}
+                ],
+                coins: [
+                    {x: 80, y: 320, w: 20, h: 20},
+                    {x: 230, y: 270, w: 20, h: 20},
+                    {x: 380, y: 220, w: 20, h: 20},
+                    {x: 520, y: 170, w: 20, h: 20},
+                    {x: 650, y: 120, w: 20, h: 20},
+                    {x: 770, y: 70, w: 20, h: 20},
+                    {x: 400, y: 70, w: 20, h: 20},
+                    {x: 150, y: 120, w: 20, h: 20}
+                ]
+            }
+        };
+
+        // ===== GENERATOR LEVEL 4-19 (makin sulit makin tinggi levelnya) =====
+        function generateLevel(lvl) {
+            const platforms = [{x: 0, y: 450, w: 800, h: 50}];
+            const coins = [];
+            const enemyDefs = [];
+
+            const diff = Math.min(lvl, 19);
+            const platCount = 6 + Math.min(6, Math.floor(diff / 3));       // 6..12 platform
+            const enemyCount = 2 + Math.min(6, Math.floor(diff / 3));      // 2..8 musuh
+            const enemySpeedBase = 1.2 + diff * 0.12;                      // makin cepat
+            const gapVariance = Math.min(40, diff * 2);
+
+            let x = 60 + (diff % 3) * 10;
+            let y = 380;
+            let dirY = -1;
+            const platRefs = [];
+
+            for (let i = 0; i < platCount; i++) {
+                const w = 90 + Math.floor(Math.random() * 30);
+                platforms.push({x, y, w, h: 20});
+                coins.push({x: x + w / 2 - 10, y: y - 30, w: 20, h: 20});
+                platRefs.push({x, y, w});
+
+                const stepX = 110 + Math.floor(Math.random() * (60 + gapVariance));
+                x += stepX;
+                if (x > 720) x = 60 + Math.floor(Math.random() * 40);
+
+                const stepY = 40 + Math.floor(Math.random() * 40);
+                y += dirY * stepY;
+                if (y < 90) { y = 90; dirY = 1; }
+                if (y > 400) { y = 400; dirY = -1; }
+            }
+
+            // musuh pertama selalu di tanah
+            enemyDefs.push({
+                x: 250 + Math.floor(Math.random() * 300), y: 430, w: 30, h: 30,
+                range: 60 + Math.floor(Math.random() * 60), speed: enemySpeedBase, dir: 1
+            });
+            for (let i = 0; i < enemyCount - 1; i++) {
+                const p = platRefs[Math.floor(Math.random() * platRefs.length)];
+                enemyDefs.push({
+                    x: p.x + 10, y: p.y - 30, w: 30, h: 30,
+                    range: Math.max(20, Math.min(p.w - 30, 40 + Math.floor(Math.random() * 40))),
+                    speed: enemySpeedBase + Math.random() * 0.5,
+                    dir: Math.random() < 0.5 ? 1 : -1
+                });
+            }
+
+            return {platforms, enemies: enemyDefs, coins};
+        }
+
+        // ===== SETUP LEVEL BOSS (level 20) =====
+        function setupBossLevel() {
+            platforms = [
+                {x: 0, y: 450, w: 800, h: 50},
+                {x: 150, y: 350, w: 120, h: 20},
+                {x: 530, y: 350, w: 120, h: 20},
+                {x: 340, y: 250, w: 120, h: 20}
+            ];
+            enemies = [];
+            coins = [];
+            drops = [];
+            bossProjectiles = [];
+            boss = {
+                x: 620, y: 370, w: 75, h: 80,
+                dir: -1, speed: 2.4,
+                hp: 8, maxHp: 8,
+                hitCooldown: 0,
+                shootTimer: 0,
+                alive: true
+            };
+
+            player.x = 80;
+            player.y = 350;
+            player.vx = 0;
+            player.vy = 0;
+            player.grounded = false;
+            player.invincible = 90;
+
+            levelSpan.textContent = 'BOSS';
+        }
+
+        // ===== INISIALISASI LEVEL =====
+        function initLevel(lvl) {
+            boss = null;
+            bossProjectiles = [];
+            drops = [];
+
+            if (lvl === BOSS_LEVEL) {
+                setupBossLevel();
+                return;
+            }
+
+            let layout;
+            if (levelLayouts[lvl]) {
+                layout = levelLayouts[lvl];
+            } else {
+                layout = generateLevel(lvl);
+            }
+
+            platforms = layout.platforms.map(p => ({...p}));
+            enemies = layout.enemies.map(e => ({
+                ...e,
+                startX: e.x,
+                alive: true
+            }));
+            coins = layout.coins.map(c => ({
+                ...c,
+                collected: false
+            }));
+
+            // Reset posisi player
+            player.x = 80;
+            player.y = 350;
+            player.vx = 0;
+            player.vy = 0;
+            player.grounded = false;
+            player.invincible = 0;
+
+            levelSpan.textContent = lvl;
+        }
+
+        // ===== INPUT =====
+        const keys = {};
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            if ((e.key === ' ' || e.key === 'ArrowUp') && gameRunning) {
+                e.preventDefault();
+                if (player.grounded) {
+                    player.vy = player.jumpPower;
+                    player.grounded = false;
+                }
+            }
+        });
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        // ===== PLAYER MATI (kena musuh / jatuh / proyektil boss) =====
+        function playerDie() {
+            lives--;
+            if (lives <= 0) {
+                gameOverDiv.classList.remove('victory');
+                gameOverDiv.innerHTML = '☁️ GAME OVER ☁️<br>Skor: ' + score + '<br><button onclick="restartGame()">Main Lagi</button>';
+                gameOverDiv.style.display = 'block';
+                gameRunning = false;
+                updateUI();
+                return;
+            }
+            // Reset posisi
+            player.x = 80;
+            player.y = 350;
+            player.vx = 0;
+            player.vy = 0;
+            player.invincible = 90; // 1.5 detik invincible
+            updateUI();
+        }
+
+        // ===== VICTORY (setelah kalahkan boss) =====
+        function triggerVictory() {
+            gameRunning = false;
+            gameOverDiv.classList.add('victory');
+            gameOverDiv.innerHTML =
+                '🏆 BOSS DIKALAHKAN! 🏆<br>' +
+                '🏠 Guntur berhasil bertahan hidup dan kembali ke rumahnya 🏠<br>' +
+                'Skor Akhir: ' + score +
+                '<br><button onclick="restartGame()">Main Lagi</button>';
+            gameOverDiv.style.display = 'block';
+        }
+
+        // ===== UPDATE UI =====
+        function updateUI() {
+            scoreSpan.textContent = score;
+            levelSpan.textContent = (level === BOSS_LEVEL) ? 'BOSS' : level;
+            let hearts = '';
+            for (let i = 0; i < lives; i++) hearts += '❤️';
+            if (lives <= 0) hearts = '💀';
+            livesSpan.textContent = hearts || '💀';
+        }
+
+        // ===== UPDATE GAME =====
+        function update() {
+            if (!gameRunning) return;
+            frameCount++;
+
+            // Gerak horizontal
+            let moveX = 0;
+            if (keys['ArrowLeft'] || keys['a']) {
+                moveX = -player.speed;
+                player.facing = -1;
+            }
+            if (keys['ArrowRight'] || keys['d']) {
+                moveX = player.speed;
+                player.facing = 1;
+            }
+
+            player.vx = moveX;
+            player.x += player.vx;
+
+            // Animasi frame
+            if (moveX !== 0) {
+                player.frameTimer++;
+                if (player.frameTimer > 8) {
+                    player.frame = (player.frame + 1) % 4;
+                    player.frameTimer = 0;
+                }
+            } else {
+                player.frame = 0;
+                player.frameTimer = 0;
+            }
+
+            // Gravitasi
+            player.vy += gravity;
+            player.y += player.vy;
+
+            // Batas kiri-kanan
+            if (player.x < 0) player.x = 0;
+            if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+
+            // Cek tumbukan dengan platform
+            player.grounded = false;
+            for (let plat of platforms) {
+                if (player.vy >= 0 &&
+                    player.x + player.width > plat.x &&
+                    player.x < plat.x + plat.w &&
+                    player.y + player.height > plat.y &&
+                    player.y + player.height < plat.y + plat.h + 15) {
+                    player.y = plat.y - player.height;
+                    player.vy = 0;
+                    player.grounded = true;
+                }
+                else if (player.vy < 0 &&
+                    player.x + player.width > plat.x &&
+                    player.x < plat.x + plat.w &&
+                    player.y > plat.y &&
+                    player.y < plat.y + plat.h + 10) {
+                    player.y = plat.y + plat.h;
+                    player.vy = 0;
+                }
+            }
+
+            // Cek jatuh
+            if (player.y > canvas.height + 50) {
+                playerDie();
+                return;
+            }
+
+            // Update invincible
+            if (player.invincible > 0) player.invincible--;
+
+            // Update musuh biasa
+            for (let enemy of enemies) {
+                if (!enemy.alive) continue;
+                enemy.x += enemy.speed * enemy.dir;
+                if (enemy.x > enemy.startX + enemy.range || enemy.x < enemy.startX - enemy.range) {
+                    enemy.dir *= -1;
+                }
+
+                if (player.invincible <= 0 &&
+                    player.x + player.width > enemy.x &&
+                    player.x < enemy.x + enemy.w &&
+                    player.y + player.height > enemy.y &&
+                    player.y < enemy.y + enemy.h) {
+                    if (player.vy > 0 && player.y + player.height - enemy.y < 20) {
+                        enemy.alive = false;
+                        player.vy = -8;
+                        score += 50;
+                        // Kemungkinan drop heart jika nyawa berkurang
+                        if (lives < maxLives && Math.random() < 0.35) {
+                            drops.push({
+                                x: enemy.x + enemy.w / 2 - 10,
+                                y: enemy.y,
+                                w: 20, h: 20,
+                                vy: 0,
+                                collected: false
+                            });
+                        }
+                        updateUI();
+                    } else {
+                        playerDie();
+                        return;
+                    }
+                }
+            }
+
+            // Update item drop (heart)
+            for (let d of drops) {
+                if (d.collected) continue;
+                d.vy += gravity * 0.5;
+                d.y += d.vy;
+                for (let plat of platforms) {
+                    if (d.vy >= 0 &&
+                        d.x + d.w > plat.x && d.x < plat.x + plat.w &&
+                        d.y + d.h > plat.y && d.y + d.h < plat.y + plat.h + 15) {
+                        d.y = plat.y - d.h;
+                        d.vy = 0;
+                    }
+                }
+                if (overlap(player.x, player.y, player.width, player.height, d.x, d.y, d.w, d.h)) {
+                    d.collected = true;
+                    lives = Math.min(maxLives, lives + 1);
+                    updateUI();
+                }
+            }
+            drops = drops.filter(d => !d.collected && d.y < canvas.height + 60);
+
+            // Update koin
+            for (let coin of coins) {
+                if (coin.collected) continue;
+                if (player.x + player.width > coin.x &&
+                    player.x < coin.x + coin.w &&
+                    player.y + player.height > coin.y &&
+                    player.y < coin.y + coin.h) {
+                    coin.collected = true;
+                    score += 100;
+                    updateUI();
+                }
+            }
+
+            // ===== LOGIKA BOSS =====
+            if (boss && boss.alive) {
+                boss.x += boss.speed * boss.dir;
+                if (boss.x < 320) boss.dir = 1;
+                if (boss.x > 720) boss.dir = -1;
+
+                if (boss.hitCooldown > 0) boss.hitCooldown--;
+
+                boss.shootTimer++;
+                if (boss.shootTimer > 85) {
+                    boss.shootTimer = 0;
+                    const toPlayer = player.x < boss.x ? -1 : 1;
+                    bossProjectiles.push({
+                        x: boss.x + (toPlayer < 0 ? 0 : boss.w),
+                        y: boss.y + 30,
+                        vx: toPlayer * 4.5,
+                        w: 14, h: 14
+                    });
+                }
+
+                if (player.invincible <= 0 &&
+                    overlap(player.x, player.y, player.width, player.height, boss.x, boss.y, boss.w, boss.h)) {
+                    if (player.vy > 0 && player.y + player.height - boss.y < 30 && boss.hitCooldown <= 0) {
+                        boss.hp--;
+                        boss.hitCooldown = 45;
+                        player.vy = -10;
+                        score += 200;
+                        updateUI();
+                        if (boss.hp <= 0) {
+                            boss.alive = false;
+                            triggerVictory();
+                            return;
+                        }
+                    } else if (boss.hitCooldown <= 0 || player.vy <= 0) {
+                        playerDie();
+                        return;
+                    }
+                }
+            }
+
+            // Update proyektil boss
+            for (let proj of bossProjectiles) {
+                proj.x += proj.vx;
+            }
+            bossProjectiles = bossProjectiles.filter(p => p.x > -20 && p.x < canvas.width + 20);
+            if (boss && player.invincible <= 0) {
+                for (let proj of bossProjectiles) {
+                    if (overlap(player.x, player.y, player.width, player.height, proj.x, proj.y, proj.w, proj.h)) {
+                        proj.hit = true;
+                        playerDie();
+                        return;
+                    }
+                }
+                bossProjectiles = bossProjectiles.filter(p => !p.hit);
+            }
+
+            // Cek level selesai (semua koin diambil) - tidak berlaku di level boss
+            if (!boss && coins.length > 0) {
+                const allCoinsCollected = coins.every(c => c.collected);
+                if (allCoinsCollected) {
+                    level++;
+                    if (level > MAX_LEVEL) {
+                        triggerVictory();
+                        return;
+                    } else {
+                        initLevel(level);
+                    }
+                }
+            }
+
+            updateUI();
+        }
+
+        // ===== GAMBAR =====
+        function draw() {
+            // Langit gradien
+            const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            grad.addColorStop(0, boss ? '#4a1010' : '#87CEEB');
+            grad.addColorStop(1, boss ? '#7a2a2a' : '#E0F7FA');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Awan-awan
+            ctx.fillStyle = 'rgba(255,255,255,0.8)';
+            for (let i = 0; i < 5; i++) {
+                let ax = (frameCount * 0.3 + i * 180) % 900 - 100;
+                let ay = 30 + i * 30;
+                ctx.beginPath();
+                ctx.arc(ax, ay, 25, 0, Math.PI * 2);
+                ctx.arc(ax + 30, ay - 10, 20, 0, Math.PI * 2);
+                ctx.arc(ax + 55, ay, 22, 0, Math.PI * 2);
+                ctx.arc(ax + 25, ay + 5, 18, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Platform
+            for (let plat of platforms) {
+                ctx.fillStyle = '#8B4513';
+                ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+                ctx.fillStyle = '#A0522D';
+                ctx.fillRect(plat.x, plat.y, plat.w, 5);
+                ctx.fillStyle = '#228B22';
+                ctx.fillRect(plat.x, plat.y, plat.w, 4);
+                ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+                ctx.lineWidth = 1;
+                for (let bx = plat.x; bx < plat.x + plat.w; bx += 20) {
+                    ctx.beginPath();
+                    ctx.moveTo(bx, plat.y);
+                    ctx.lineTo(bx, plat.y + plat.h);
+                    ctx.stroke();
+                }
+            }
+
+            // Koin
+            for (let coin of coins) {
+                if (coin.collected) continue;
+                const cx = coin.x + coin.w / 2;
+                const cy = coin.y + coin.h / 2;
+                const pulse = Math.sin(frameCount * 0.1) * 3;
+
+                ctx.fillStyle = '#FFD700';
+                ctx.shadowColor = '#FFD700';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.arc(cx, cy + pulse, 12, 0, Math.PI);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(cx, cy + pulse, 12, Math.PI, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#B8860B';
+                ctx.font = 'bold 14px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('$', cx, cy + pulse + 1);
+            }
+
+            // Item drop (heart)
+            for (let d of drops) {
+                if (d.collected) continue;
+                const cx = d.x + d.w / 2;
+                const cy = d.y + d.h / 2;
+                const pulse = Math.sin(frameCount * 0.15) * 2;
+                ctx.font = (18 + pulse) + 'px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowColor = '#ff4444';
+                ctx.shadowBlur = 10;
+                ctx.fillText('❤️', cx, cy);
+                ctx.shadowBlur = 0;
+            }
+
+            // Musuh biasa
+            for (let enemy of enemies) {
+                if (!enemy.alive) continue;
+                ctx.fillStyle = '#8B0000';
+                ctx.fillRect(enemy.x, enemy.y, enemy.w, enemy.h);
+                ctx.fillStyle = '#FFD700';
+                ctx.fillRect(enemy.x + 5, enemy.y + 5, 7, 7);
+                ctx.fillRect(enemy.x + enemy.w - 12, enemy.y + 5, 7, 7);
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(enemy.x + 3, enemy.y + 3);
+                ctx.lineTo(enemy.x + 12, enemy.y + 7);
+                ctx.moveTo(enemy.x + enemy.w - 3, enemy.y + 3);
+                ctx.lineTo(enemy.x + enemy.w - 12, enemy.y + 7);
+                ctx.stroke();
+                ctx.fillStyle = '#4a0000';
+                ctx.beginPath();
+                ctx.moveTo(enemy.x + 5, enemy.y);
+                ctx.lineTo(enemy.x + 10, enemy.y - 10);
+                ctx.lineTo(enemy.x + 15, enemy.y);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(enemy.x + enemy.w - 5, enemy.y);
+                ctx.lineTo(enemy.x + enemy.w - 10, enemy.y - 10);
+                ctx.lineTo(enemy.x + enemy.w - 15, enemy.y);
+                ctx.fill();
+            }
+
+            // ===== BOSS =====
+            if (boss && boss.alive) {
+                const flash = boss.hitCooldown > 0 && Math.floor(boss.hitCooldown / 4) % 2 === 0;
+                ctx.fillStyle = flash ? '#ff6666' : '#5a0000';
+                ctx.fillRect(boss.x, boss.y, boss.w, boss.h);
+                // mata menyala
+                ctx.fillStyle = '#FFFF00';
+                ctx.shadowColor = '#FFFF00';
+                ctx.shadowBlur = 12;
+                ctx.fillRect(boss.x + 12, boss.y + 15, 14, 14);
+                ctx.fillRect(boss.x + boss.w - 26, boss.y + 15, 14, 14);
+                ctx.shadowBlur = 0;
+                // tanduk besar
+                ctx.fillStyle = '#2a0000';
+                ctx.beginPath();
+                ctx.moveTo(boss.x, boss.y);
+                ctx.lineTo(boss.x + 15, boss.y - 25);
+                ctx.lineTo(boss.x + 25, boss.y);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(boss.x + boss.w, boss.y);
+                ctx.lineTo(boss.x + boss.w - 15, boss.y - 25);
+                ctx.lineTo(boss.x + boss.w - 25, boss.y);
+                ctx.fill();
+                // mulut geram
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(boss.x + 15, boss.y + 55);
+                ctx.lineTo(boss.x + boss.w - 15, boss.y + 55);
+                ctx.stroke();
+
+                // Health bar boss
+                const barW = 300;
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(canvas.width / 2 - barW / 2, 15, barW, 18);
+                ctx.fillStyle = '#ff3333';
+                ctx.fillRect(canvas.width / 2 - barW / 2, 15, barW * (boss.hp / boss.maxHp), 18);
+                ctx.strokeStyle = '#FFD700';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(canvas.width / 2 - barW / 2, 15, barW, 18);
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('BOSS ' + boss.hp + '/' + boss.maxHp, canvas.width / 2, 29);
+            }
+
+            // Proyektil boss
+            for (let proj of bossProjectiles) {
+                ctx.fillStyle = '#FF6600';
+                ctx.shadowColor = '#FF6600';
+                ctx.shadowBlur = 12;
+                ctx.beginPath();
+                ctx.arc(proj.x + proj.w / 2, proj.y + proj.h / 2, proj.w / 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+
+            // ===== GAMBAR KARAKTER GUNTUR =====
+            const p = player;
+            if (p.invincible > 0 && Math.floor(p.invincible / 5) % 2 === 0) {
+                ctx.globalAlpha = 0.5;
+            }
+
+            ctx.save();
+            ctx.translate(p.x + p.width / 2, p.y + p.height);
+            ctx.scale(p.facing, 1);
+
+            ctx.fillStyle = 'rgba(0,0,0,0.2)';
+            ctx.beginPath();
+            ctx.ellipse(0, 5, 18, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#1565C0';
+            ctx.fillRect(-15, -45, 30, 35);
+
+            ctx.fillStyle = '#0D47A1';
+            ctx.fillRect(-5, -45, 10, 35);
+
+            ctx.strokeStyle = '#FFD700';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, -45);
+            ctx.lineTo(0, -10);
+            ctx.stroke();
+
+            ctx.fillStyle = '#FFDAB9';
+            ctx.beginPath();
+            ctx.arc(0, -52, 14, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#1a1a1a';
+            ctx.beginPath();
+            ctx.moveTo(-14, -52);
+            ctx.lineTo(-8, -68);
+            ctx.lineTo(-2, -60);
+            ctx.lineTo(3, -72);
+            ctx.lineTo(8, -62);
+            ctx.lineTo(12, -70);
+            ctx.lineTo(16, -58);
+            ctx.lineTo(14, -50);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(-8, -55, 5, 6);
+            ctx.fillRect(3, -55, 5, 6);
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(-7, -56, 2, 2);
+            ctx.fillRect(4, -56, 2, 2);
+
+            ctx.strokeStyle = '#c0392b';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, -47, 5, 0.1, Math.PI - 0.1);
+            ctx.stroke();
+
+            ctx.fillStyle = '#FFDAB9';
+            const armSwing = Math.sin(frameCount * 0.2) * (Math.abs(p.vx) > 0 ? 8 : 0);
+            ctx.fillRect(-20, -40 + armSwing, 6, 15);
+            ctx.fillRect(14, -40 - armSwing, 6, 15);
+
+            ctx.fillStyle = '#1a237e';
+            const legSwing = Math.sin(frameCount * 0.2) * (Math.abs(p.vx) > 0 ? 5 : 0);
+            ctx.fillRect(-12, -10 + legSwing, 8, 12);
+            ctx.fillRect(4, -10 - legSwing, 8, 12);
+
+            ctx.fillStyle = '#4a4a4a';
+            ctx.fillRect(-14, 1 + legSwing, 12, 5);
+            ctx.fillRect(2, 1 - legSwing, 12, 5);
+
+            ctx.fillStyle = '#E53935';
+            ctx.beginPath();
+            ctx.moveTo(-12, -42);
+            ctx.lineTo(12, -42);
+            ctx.lineTo(10, -30);
+            ctx.lineTo(-10, -30);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillRect(8, -30, 5, 15);
+
+            ctx.restore();
+            ctx.globalAlpha = 1.0;
+
+            ctx.fillStyle = '#FFD700';
+            ctx.font = 'bold 10px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('GUNTUR', p.x + p.width / 2, p.y - 10);
+
+            // Info level
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(5, 5, 130, 25);
+            ctx.fillStyle = '#FFD700';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('Level ' + (level === BOSS_LEVEL ? 'BOSS' : level) + '/20', 15, 23);
+
+            // Progress koin (tidak tampil di level boss)
+            if (!boss) {
+                const totalCoins = coins.length;
+                const collectedCoins = coins.filter(c => c.collected).length;
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.fillRect(canvas.width - 160, 5, 155, 25);
+                ctx.fillStyle = '#FFD700';
+                ctx.font = 'bold 12px Arial';
+                ctx.textAlign = 'right';
+                ctx.fillText('🪙 ' + collectedCoins + '/' + totalCoins, canvas.width - 10, 23);
+            }
+        }
+
+        // ===== GAME LOOP =====
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // ===== RESTART =====
+        function restartGame() {
+            score = 0;
+            level = 1;
+            lives = maxLives;
+            gameRunning = true;
+            drops = [];
+            boss = null;
+            bossProjectiles = [];
+            gameOverDiv.classList.remove('victory');
+            gameOverDiv.style.display = 'none';
+            initLevel(1);
+            updateUI();
+        }
+
+        // ===== MULAI GAME =====
+        initLevel(1);
+        updateUI();
+        gameLoop();
+    </script>
+</body>
+</html>
